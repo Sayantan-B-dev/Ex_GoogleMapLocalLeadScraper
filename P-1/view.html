@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leads Viewer</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:      #0e0e10;
+    --surface: #141417;
+    --border:  #1e1e24;
+    --border2: #2a2a30;
+    --text:    #e8e8ec;
+    --muted:   #666;
+    --dim:     #444;
+    --accent:  #7c6bef;
+    --accent-soft: rgba(124,107,239,0.12);
+    --accent-mid:  rgba(124,107,239,0.22);
+    --teal:    #3ecfa0;
+    --teal-soft: rgba(62,207,160,0.14);
+    --coral:   #f07a54;
+    --coral-soft: rgba(240,122,84,0.14);
+    --row-hover: #131318;
+    --radius: 10px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ── Layout ── */
+  .app { max-width: 1280px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+  /* ── Header ── */
+  .header {
+    display: flex; align-items: center; gap: 14px;
+    margin-bottom: 1.75rem;
+  }
+  .logo {
+    width: 40px; height: 40px; border-radius: 12px;
+    background: var(--surface);
+    border: 0.5px solid var(--border2);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--accent); font-size: 20px; flex-shrink: 0;
+  }
+  .header h1 { font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
+  .header p  { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  /* ── Stats ── */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+    margin-bottom: 1.5rem;
+  }
+  .stat {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    transition: border-color 0.2s;
+  }
+  .stat:hover { border-color: var(--border2); }
+  .stat-label {
+    font-size: 10px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--dim); margin-bottom: 7px;
+  }
+  .stat-value { font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .stat-value.accent { color: var(--accent); }
+
+  /* ── Toolbar ── */
+  .toolbar {
+    display: flex; gap: 10px; align-items: center;
+    margin-bottom: 1.25rem;
+  }
+  .search-wrap { flex: 1; position: relative; }
+  .search-wrap .icon {
+    position: absolute; left: 12px; top: 50%;
+    transform: translateY(-50%);
+    font-size: 16px; color: var(--dim); pointer-events: none;
+  }
+  .search-wrap input {
+    width: 100%;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 14px;
+    padding: 10px 14px 10px 38px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .search-wrap input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .search-wrap input::placeholder { color: var(--dim); }
+
+  .btn {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-size: 13px;
+    padding: 10px 14px;
+    cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+    white-space: nowrap;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    font-family: inherit;
+  }
+  .btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .btn i { font-size: 16px; }
+
+  /* ── Table container ── */
+  .table-wrap {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .table-scroll {
+    max-height: 62vh;
+    overflow: auto;
+  }
+  .table-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+  .table-scroll::-webkit-scrollbar-track { background: transparent; }
+  .table-scroll::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  .table-scroll::-webkit-scrollbar-thumb:hover { background: #3a3a46; }
+
+  /* ── Table ── */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+
+  thead { position: sticky; top: 0; z-index: 2; }
+
+  th {
+    background: var(--surface);
+    padding: 11px 16px;
+    text-align: left;
+    font-size: 10px; font-weight: 500;
+    color: var(--dim);
+    text-transform: uppercase; letter-spacing: 0.07em;
+    border-bottom: 0.5px solid var(--border);
+    cursor: pointer; user-select: none; white-space: nowrap;
+    transition: color 0.15s;
+  }
+  th:hover { color: #aaa; }
+  th.asc, th.desc { color: var(--accent); }
+  th .si { margin-left: 4px; font-size: 11px; opacity: 0.4; vertical-align: middle; }
+  th.asc .si, th.desc .si { opacity: 1; }
+
+  td {
+    padding: 10px 16px;
+    border-bottom: 0.5px solid #121215;
+    color: #c4c4ce;
+    max-width: 200px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: none; }
+
+  tbody tr { transition: background 0.1s; animation: rowIn 0.22s ease both; }
+  tbody tr:hover td { background: var(--row-hover); }
+
+  @keyframes rowIn {
+    from { opacity: 0; transform: translateY(5px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── Link button ── */
+  .link-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    color: var(--accent);
+    font-size: 12px; text-decoration: none;
+    background: var(--accent-soft);
+    border: 0.5px solid rgba(124,107,239,0.28);
+    border-radius: 6px;
+    padding: 3px 9px;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .link-btn:hover {
+    background: var(--accent-mid);
+    border-color: rgba(124,107,239,0.5);
+    color: #b0a6f8;
+  }
+  .link-btn i { font-size: 12px; }
+
+  /* ── Badges ── */
+  .badge {
+    display: inline-block;
+    font-size: 11px; font-weight: 500;
+    padding: 2px 8px; border-radius: 5px;
+  }
+  .b-teal   { background: var(--teal-soft);  color: var(--teal); }
+  .b-coral  { background: var(--coral-soft); color: var(--coral); }
+  .b-purple { background: var(--accent-soft); color: #a196f5; }
+
+  /* ── Footer bar ── */
+  .footer-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 16px;
+    border-top: 0.5px solid var(--border);
+    font-size: 12px; color: var(--dim);
+  }
+
+  /* ── Empty state ── */
+  .empty {
+    text-align: center; padding: 5rem 1rem;
+  }
+  .empty i { font-size: 44px; color: var(--border2); display: block; margin-bottom: 14px; }
+  .empty p { color: var(--dim); font-size: 14px; line-height: 1.7; }
+  .empty a { color: var(--accent); cursor: pointer; }
+  .empty a:hover { text-decoration: underline; }
+
+  /* ── Drop overlay ── */
+  .drop-overlay {
+    position: fixed; inset: 0;
+    background: rgba(124,107,239,0.07);
+    border: 2px dashed rgba(124,107,239,0.35);
+    border-radius: 16px;
+    z-index: 100;
+    display: none; align-items: center; justify-content: center;
+    pointer-events: none;
+  }
+  .drop-overlay.on { display: flex; }
+  .drop-overlay span { color: var(--accent); font-size: 17px; font-weight: 500; }
+
+  #fileInput { display: none; }
+
+  /* ── Responsive ── */
+  @media (max-width: 640px) {
+    .app { padding: 1.25rem 1rem; }
+    .header h1 { font-size: 16px; }
+    .stats { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<input type="file" id="fileInput" accept=".csv">
+<div class="drop-overlay" id="dropOverlay">
+  <span><i class="ti ti-upload"></i> &nbsp;Drop your CSV here</span>
+</div>
+
+<div class="app">
+
+  <div class="header">
+    <div class="logo"><i class="ti ti-map-pin" aria-hidden="true"></i></div>
+    <div>
+      <h1>Leads Viewer</h1>
+      <p>Google Maps leads — upload or drag a CSV to get started</p>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-label">Total leads</div>
+      <div class="stat-value accent" id="sTotal">0</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Showing</div>
+      <div class="stat-value" id="sShowing">0</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">With website</div>
+      <div class="stat-value" id="sWeb">0</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">With phone</div>
+      <div class="stat-value" id="sPhone">0</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="search-wrap">
+      <i class="ti ti-search icon" aria-hidden="true"></i>
+      <input type="text" id="searchInput" placeholder="Search name, city, phone, website…" autocomplete="off">
+    </div>
+    <button class="btn" onclick="document.getElementById('fileInput').click()">
+      <i class="ti ti-upload" aria-hidden="true"></i> Upload CSV
+    </button>
+  </div>
+
+  <div class="table-wrap">
+    <div class="table-scroll">
+      <table id="leadTable">
+        <thead></thead>
+        <tbody id="leadBody">
+          <tr><td colspan="99">
+            <div class="empty">
+              <i class="ti ti-table-off" aria-hidden="true"></i>
+              <p>No data loaded.<br>
+                <a onclick="document.getElementById('fileInput').click()">Upload a CSV</a>
+                or drop it anywhere on this page.</p>
+            </div>
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="footer-bar">
+      <span id="footerLeft">No file loaded</span>
+      <span id="footerRight"></span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let allData = [], headers = [], sortState = { col: null, dir: 'asc' };
+
+/* ── Smart badge detection ── */
+function badge(header, value) {
+  const h = header.toLowerCase();
+  if (!value) return null;
+  if (h.includes('rating') || h.includes('score')) {
+    const n = parseFloat(value);
+    if (!isNaN(n)) {
+      const cls = n >= 4 ? 'b-teal' : n >= 3 ? 'b-purple' : 'b-coral';
+      return `<span class="badge ${cls}">${value}</span>`;
+    }
+  }
+  if (h.includes('type') || h.includes('category') || h.includes('status')) {
+    return `<span class="badge b-purple">${value}</span>`;
+  }
+  return null;
+}
+
+/* ── Render ── */
+function render(data) {
+  const thead = document.querySelector('#leadTable thead');
+  const tbody = document.getElementById('leadBody');
+  thead.innerHTML = '';
+  tbody.innerHTML = '';
+
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="99"><div class="empty">
+      <i class="ti ti-zoom-cancel" aria-hidden="true"></i>
+      <p>No results match your search.</p>
+    </div></td></tr>`;
+    upd(0);
+    return;
+  }
+
+  /* header row */
+  const tr = document.createElement('tr');
+  headers.forEach(h => {
+    const th = document.createElement('th');
+    const isActive = sortState.col === h;
+    const ico = isActive ? (sortState.dir === 'asc' ? 'ti-chevron-up' : 'ti-chevron-down') : 'ti-selector';
+    th.className = isActive ? sortState.dir : '';
+    th.innerHTML = `${h}<i class="ti ${ico} si" aria-hidden="true"></i>`;
+    th.onclick = () => sortBy(h);
+    tr.appendChild(th);
+  });
+  thead.appendChild(tr);
+
+  /* data rows */
+  const frag = document.createDocumentFragment();
+  data.forEach((row, i) => {
+    const tr = document.createElement('tr');
+    tr.style.animationDelay = `${Math.min(i * 16, 280)}ms`;
+    headers.forEach(h => {
+      const td = document.createElement('td');
+      const val = (row[h] || '').trim();
+      if (val.startsWith('http://') || val.startsWith('https://')) {
+        td.innerHTML = `<a class="link-btn" href="${val}" target="_blank" rel="noopener"><i class="ti ti-external-link"></i>Open</a>`;
+      } else {
+        const b = badge(h, val);
+        if (b) td.innerHTML = b; else td.textContent = val;
+      }
+      tr.appendChild(td);
+    });
+    frag.appendChild(tr);
+  });
+  tbody.appendChild(frag);
+  upd(data.length);
+}
+
+function upd(showing) {
+  document.getElementById('sShowing').textContent = showing.toLocaleString();
+  document.getElementById('footerLeft').textContent =
+    `${showing.toLocaleString()} of ${allData.length.toLocaleString()} leads`;
+  document.getElementById('footerRight').textContent =
+    sortState.col ? `Sorted by ${sortState.col} · ${sortState.dir}` : '';
+}
+
+function updateStats() {
+  document.getElementById('sTotal').textContent = allData.length.toLocaleString();
+  const webCount = allData.filter(r =>
+    Object.values(r).some(v => v && (v.startsWith('http://') || v.startsWith('https://')))
+  ).length;
+  const phoneCol = headers.find(h => h.toLowerCase().includes('phone'));
+  const phoneCount = phoneCol ? allData.filter(r => (r[phoneCol] || '').trim()).length : 0;
+  document.getElementById('sWeb').textContent = webCount.toLocaleString();
+  document.getElementById('sPhone').textContent = phoneCount.toLocaleString();
+}
+
+/* ── Sort ── */
+function sortBy(col) {
+  sortState.dir = sortState.col === col && sortState.dir === 'asc' ? 'desc' : 'asc';
+  sortState.col = col;
+  allData.sort((a, b) => {
+    const x = (a[col] || '').toLowerCase();
+    const y = (b[col] || '').toLowerCase();
+    const c = x.localeCompare(y, undefined, { numeric: true });
+    return sortState.dir === 'asc' ? c : -c;
+  });
+  filter();
+}
+
+/* ── Filter ── */
+function filter() {
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  render(q ? allData.filter(r => Object.values(r).join(' ').toLowerCase().includes(q)) : allData);
+}
+
+/* ── Load CSV ── */
+function loadCSV(text) {
+  Papa.parse(text, {
+    header: true, skipEmptyLines: true,
+    complete(res) {
+      allData = res.data;
+      headers = res.meta.fields || (allData.length ? Object.keys(allData[0]) : []);
+      sortState = { col: null, dir: 'asc' };
+      updateStats();
+      render(allData);
+    }
+  });
+}
+
+/* ── Events ── */
+document.getElementById('searchInput').addEventListener('input', filter);
+
+document.getElementById('fileInput').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => loadCSV(ev.target.result);
+  reader.readAsText(f);
+  e.target.value = '';
+});
+
+/* drag-and-drop */
+const overlay = document.getElementById('dropOverlay');
+let dragCount = 0;
+document.addEventListener('dragenter', e => { e.preventDefault(); dragCount++; overlay.classList.add('on'); });
+document.addEventListener('dragleave', () => { dragCount--; if (dragCount <= 0) { dragCount = 0; overlay.classList.remove('on'); } });
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => {
+  e.preventDefault(); dragCount = 0; overlay.classList.remove('on');
+  const f = e.dataTransfer.files[0];
+  if (f && f.name.endsWith('.csv')) {
+    const reader = new FileReader();
+    reader.onload = ev => loadCSV(ev.target.result);
+    reader.readAsText(f);
+  }
+});
+
+/* ── Also try to auto-fetch the default CSV (works with a local server) ── */
+fetch('google_maps_leads.csv')
+  .then(r => { if (r.ok) return r.text(); throw new Error('not found'); })
+  .then(loadCSV)
+  .catch(() => {});
+</script>
+</body>
+</html>
