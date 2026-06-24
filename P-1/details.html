@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leads Data</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0e0e10; color: #e8e8ec; margin: 0; padding: 20px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #1e1e24; }
+  th { position: sticky; top: 0; background: #141417; color: #666; font-size: 10px; text-transform: uppercase; }
+  tr:hover td { background: #131318; }
+  td { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  a { color: #7c6bef; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1400px; margin: 0 auto; }
+  .bar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .count { color: #666; font-size: 12px; }
+  .loading { text-align: center; padding: 60px 20px; color: #444; }
+  .row-count { color: #666; font-size: 11px; margin-left: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar">
+    <span style="font-weight:500;">Leads Explorer</span>
+    <span class="count" id="info">Scanning...</span>
+  </div>
+  <div id="content"><div class="loading">Scanning output CSVs...</div></div>
+</div>
+<script>
+const BATCHES = [
+  "p1_batch_1","p1_batch_2","p1_batch_3","p1_batch_4","p1_batch_5",
+];
+
+let allHeaders = null;
+let allData = [];
+let loaded = 0;
+
+function loadAll() {
+  let promises = BATCHES.map(batch => {
+    return fetch('output/' + batch + '.csv')
+      .then(r => { if (!r.ok) throw new Error('missing'); return r.text(); })
+      .then(text => new Promise(resolve => {
+        Papa.parse(text, { header: true, skipEmptyLines: true, complete: res => {
+          if (res.data && res.data.length) {
+            if (!allHeaders) allHeaders = res.meta.fields || Object.keys(res.data[0]);
+            allData = allData.concat(res.data);
+            loaded++;
+          }
+          resolve();
+        }});
+      }))
+      .catch(() => {});
+  });
+
+  Promise.all(promises).then(() => render());
+}
+
+function render() {
+  if (!allData.length) {
+    document.getElementById('content').innerHTML = '<div class="loading">No CSV files found in output/. Run scraping first.</div>';
+    document.getElementById('info').textContent = '0 leads';
+    return;
+  }
+
+  document.getElementById('info').textContent = allData.length + ' leads from ' + loaded + ' batches';
+
+  const headers = allHeaders || Object.keys(allData[0]);
+  let html = '<table><thead><tr>' + headers.map(h => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>';
+  allData.forEach(r => {
+    html += '<tr>' + headers.map(h => {
+      const v = (r[h] || '').trim();
+      if (v.startsWith('http://') || v.startsWith('https://')) return '<td><a href="' + v + '" target="_blank">' + v.replace(/^https?:\/\//, '').substring(0, 30) + '</a></td>';
+      return '<td>' + v.replace(/</g,'&lt;') + '</td>';
+    }).join('') + '</tr>';
+  });
+  html += '</tbody></table>';
+  document.getElementById('content').innerHTML = html;
+}
+
+loadAll();
+</script>
+</body>
+</html>
