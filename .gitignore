@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual env
+.env
+.env.*
+venv/
+.venv/
+env/
+
+# Node
+node_modules/
+
+# Scraping runtime output
+P-1/output/
+P-1/profiles/
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

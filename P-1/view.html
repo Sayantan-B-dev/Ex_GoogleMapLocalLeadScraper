@@ -240,6 +240,97 @@
 
   #fileInput { display: none; }
 
+  /* ── Progress Panel ── */
+  .progress-panel {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 1.5rem;
+    padding: 16px 18px;
+    display: none;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+  .progress-panel.visible { display: block; opacity: 1; }
+  .progress-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px;
+  }
+  .progress-header h2 {
+    font-size: 14px; font-weight: 500;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .progress-header .phase-badge {
+    font-size: 10px; font-weight: 600;
+    background: var(--accent-soft); color: var(--accent);
+    padding: 2px 8px; border-radius: 5px;
+  }
+  .progress-header .timer {
+    font-size: 12px; color: var(--dim);
+    font-variant-numeric: tabular-nums;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .progress-header .countdown {
+    font-size: 11px; color: var(--muted);
+    min-width: 90px; text-align: right;
+  }
+  .progress-totals {
+    display: flex; gap: 16px; margin-bottom: 14px; flex-wrap: wrap;
+  }
+  .progress-totals .pt {
+    font-size: 12px; color: var(--muted);
+    transition: color 0.3s;
+  }
+  .progress-totals .pt strong {
+    color: var(--text); font-weight: 500;
+    transition: color 0.3s;
+  }
+  .pt.highlight strong { color: var(--accent); }
+  .batch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+  }
+  .batch-card {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    transition: border-color 0.4s ease, background 0.3s ease;
+  }
+  .batch-card.running { border-color: var(--accent); }
+  .batch-card.done    { border-color: var(--teal); }
+  .batch-card.failed  { border-color: var(--coral); }
+  .batch-card .bc-label {
+    font-weight: 500; font-size: 11px;
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 6px;
+  }
+  .batch-card .bc-label .bc-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .batch-card .bc-status {
+    font-size: 10px; font-weight: 600;
+    padding: 1px 6px; border-radius: 4px;
+    transition: background 0.3s, color 0.3s;
+  }
+  .bc-status.waiting { background: var(--border2); color: var(--dim); }
+  .bc-status.running { background: var(--accent-soft); color: var(--accent); }
+  .bc-status.done    { background: var(--teal-soft); color: var(--teal); }
+  .batch-card .bc-stats {
+    display: flex; gap: 10px; color: var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .batch-card .bc-stats span {
+    display: flex; align-items: center; gap: 3px;
+    transition: color 0.3s;
+  }
+  .batch-card .bc-stats .bc-val {
+    transition: color 0.3s;
+  }
+  .bc-val.flash { color: var(--accent); }
+
   /* ── Responsive ── */
   @media (max-width: 640px) {
     .app { padding: 1.25rem 1rem; }
@@ -263,6 +354,18 @@
       <h1>Leads Viewer</h1>
       <p>Google Maps leads — upload or drag a CSV to get started</p>
     </div>
+  </div>
+
+  <div class="progress-panel" id="progressPanel">
+    <div class="progress-header">
+      <h2><i class="ti ti-refresh" aria-hidden="true"></i> Live Scraping Progress</h2>
+      <span class="timer">
+        <span class="countdown" id="progressCountdown">Next in 10s</span>
+        <span id="progressTimer">—</span>
+      </span>
+    </div>
+    <div class="progress-totals" id="progressTotals"></div>
+    <div class="batch-grid" id="batchGrid"></div>
   </div>
 
   <div class="stats">
@@ -474,6 +577,135 @@ fetch('google_maps_leads.csv')
   .then(r => { if (r.ok) return r.text(); throw new Error('not found'); })
   .then(loadCSV)
   .catch(() => {});
+
+/* ── Live Progress (smooth, no-flash) ── */
+let progressStart = null;
+let countdown = 10;
+const PROGRESS_INTERVAL = 10;
+
+function flash(el) {
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 400);
+}
+
+function updateTotals(data) {
+  const c = document.getElementById('progressTotals');
+  const phaseLabel = `P${data.phase}`;
+  const running = data.batches.filter(b => b.status === 'running').length;
+  const done = data.batches.filter(b => b.status === 'done').length;
+
+  const items = [
+    { key: 'phase', html: `Phase: <strong>${phaseLabel}</strong>` },
+    { key: 'batches', html: `Batches: <strong>${done}/${data.total_batches}</strong> done` },
+    { key: 'running', html: `Running: <strong>${running}</strong>` },
+    { key: 'leads', html: `Leads: <strong>${data.total_leads.toLocaleString()}</strong>` },
+    { key: 'queries', html: `Queries: <strong>${data.total_queries_done.toLocaleString()}</strong>` },
+  ];
+
+  for (const item of items) {
+    let el = c.querySelector(`.pt-${item.key}`);
+    if (!el) {
+      el = document.createElement('span');
+      el.className = `pt pt-${item.key}`;
+      c.appendChild(el);
+    }
+    const prev = el.innerHTML;
+    el.innerHTML = item.html;
+    if (prev !== item.html) flash(el);
+  }
+}
+
+function buildBatchCards(data) {
+  const grid = document.getElementById('batchGrid');
+  const existing = new Map();
+  grid.querySelectorAll('.batch-card').forEach(card => {
+    existing.set(card.dataset.label, card);
+  });
+
+  for (const b of data.batches) {
+    let card = existing.get(b.label);
+    if (!card) {
+      card = document.createElement('div');
+      card.className = 'batch-card';
+      card.dataset.label = b.label;
+      card.innerHTML = `
+        <div class="bc-label">
+          <span class="bc-name"></span>
+          <span class="bc-status"></span>
+        </div>
+        <div class="bc-stats">
+          <span><i class="ti ti-users"></i> <span class="bc-val bc-leads"></span></span>
+          <span><i class="ti ti-check"></i> <span class="bc-val bc-done"></span></span>
+        </div>
+      `;
+      grid.appendChild(card);
+      existing.set(b.label, card);
+    }
+    card.className = `batch-card ${b.status}`;
+    card.querySelector('.bc-name').textContent = b.label;
+    const st = card.querySelector('.bc-status');
+    st.className = `bc-status ${b.status}`;
+    st.textContent = b.status;
+
+    const leadsEl = card.querySelector('.bc-leads');
+    const prevLeads = leadsEl.textContent;
+    leadsEl.textContent = b.leads;
+    if (prevLeads !== String(b.leads)) flash(leadsEl);
+
+    const doneEl = card.querySelector('.bc-done');
+    const prevDone = doneEl.textContent;
+    doneEl.textContent = b.queries_done;
+    if (prevDone !== String(b.queries_done)) flash(doneEl);
+  }
+
+  // remove stale cards
+  for (const [label, card] of existing) {
+    if (!data.batches.some(b => b.label === label)) {
+      card.remove();
+    }
+  }
+}
+
+function renderProgress(data) {
+  const panel = document.getElementById('progressPanel');
+  if (!data || !data.batches || !data.batches.length) {
+    panel.classList.remove('visible');
+    return;
+  }
+  panel.classList.add('visible');
+
+  if (!progressStart) progressStart = data.timestamp;
+  const elapsed = Math.floor((Date.now() / 1000) - progressStart);
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  document.getElementById('progressTimer').textContent =
+    `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')} elapsed`;
+
+  updateTotals(data);
+  buildBatchCards(data);
+}
+
+function fetchProgress() {
+  fetch('output/progress.json')
+    .then(r => { if (r.ok) return r.json(); throw new Error('no progress'); })
+    .then(renderProgress)
+    .catch(() => {
+      const panel = document.getElementById('progressPanel');
+      panel.classList.remove('visible');
+    });
+}
+
+function tick() {
+  countdown--;
+  if (countdown <= 0) {
+    countdown = PROGRESS_INTERVAL;
+    fetchProgress();
+  }
+  document.getElementById('progressCountdown').textContent = `Next in ${countdown}s`;
+}
+
+fetchProgress();
+setInterval(tick, 1000);
 </script>
 </body>
 </html>

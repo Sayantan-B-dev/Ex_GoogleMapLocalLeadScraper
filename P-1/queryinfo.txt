@@ -1,0 +1,11 @@
+Total queries: 2025
+  Priority 1: 432 (16 categories x 27 cities)
+  Priority 2: 324 (12 categories x 27 cities)
+  Priority 3: 1269 (47 categories x 27 cities)
+
+Total unique categories: 75
+  Priority 1: 16
+  Priority 2: 12
+  Priority 3: 47
+
+Cities: 27
