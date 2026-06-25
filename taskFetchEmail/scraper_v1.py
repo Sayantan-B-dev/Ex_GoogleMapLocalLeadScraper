@@ -2,7 +2,8 @@
 scraper_v1.py — Multi-threaded email extractor from lead CSVs.
 Reads p{1,2,3}_final.csv, fetches each website's homepage,
 extracts emails via regex + Cloudflare email decoding,
-optionally shallow-crawls internal links if homepage has no email.
+optionally shallow-crawls internal links + common contact paths
+if homepage has no email.
 
 Adds two columns to output:
   - website_status: ok | ok_no_email | dns_error | ssl_error | timeout | status_XXX | error
@@ -21,13 +22,14 @@ import re
 import sys
 import os
 import time
+import threading
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from threading import Lock
+from queue import Queue, Empty as QueueEmpty
 from urllib.parse import urlparse, urljoin
 
 import requests
+from requests.adapters import HTTPAdapter
 from requests.exceptions import SSLError, ConnectionError, Timeout
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -38,12 +40,10 @@ from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, TextColumn
 from rich.table import Table
 from rich.text import Text
-from rich.rule import Rule
 
-# Enable ANSI/VT escape sequences on Windows 10+
 kernel32 = ctypes.windll.kernel32
 STD_OUTPUT_HANDLE = -11
 ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
@@ -53,9 +53,8 @@ if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
     kernel32.SetConsoleMode(handle, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
 
 THREADS = 15
-TIMEOUT = 15
-MAX_RETRIES = 2
-MAX_SHALLOW_PAGES = 3
+TIMEOUT = 10
+MAX_SHALLOW_PAGES = 5
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -67,7 +66,37 @@ SKIP_DOMAIN_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".css", ".js"}
 SKIP_EMAIL_DOMAINS = {"example.com", "domain.com", "domain.net", "yourdomain.com"}
 PRIORITY_PATH_KEYWORDS = ["contact", "about", "email", "reach", "connect", "footer"]
 
+COMMON_CONTACT_PATHS = [
+    "/contact", "/contact-us", "/contactus", "/contact.html",
+    "/contact-us.html", "/about", "/about-us", "/aboutus",
+    "/reach-us", "/get-in-touch", "/enquiry", "/connect",
+    "/support", "/help", "/info", "/feedback",
+]
+
 console = Console(color_system="truecolor")
+
+_session = requests.Session()
+_session.headers.update({"User-Agent": USER_AGENT})
+adapter = HTTPAdapter(pool_connections=THREADS * 2, pool_maxsize=THREADS * 4,
+                      max_retries=0, pool_block=False)
+_session.mount("https://", adapter)
+_session.mount("http://", adapter)
+
+_thread_status = [
+    {"tid": i, "website": "", "status": "idle", "elapsed": 0.0, "result": ""}
+    for i in range(THREADS)
+]
+_thread_lock = threading.Lock()
+
+
+def set_thread(tid, **kw):
+    with _thread_lock:
+        _thread_status[tid].update(kw)
+
+
+def get_threads():
+    with _thread_lock:
+        return list(_thread_status)
 
 
 @dataclass
@@ -80,8 +109,8 @@ class ScrapeState:
     start_ts: float = field(default_factory=time.time)
     phase: str = ""
     mode: str = ""
-    log_lines: deque = field(default_factory=lambda: deque(maxlen=18))
-    _lock: Lock = field(default_factory=Lock)
+    log_lines: deque = field(default_factory=lambda: deque(maxlen=12))
+    _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def push(self, found, no_email, errors, log_line=None):
         with self._lock:
@@ -97,71 +126,89 @@ def make_layout(state: ScrapeState) -> Layout:
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=3),
-        Layout(name="body"),
-    )
-    layout["body"].split_row(
-        Layout(name="left", ratio=3),
-        Layout(name="right", ratio=2),
-    )
-    layout["body"]["left"].split_column(
-        Layout(name="progress", size=5),
-        Layout(name="stats", size=5),
-    )
-    layout["body"]["right"].split_column(
-        Layout(name="eta", size=5),
-        Layout(name="log", ratio=1),
+        Layout(name="threads", ratio=2),
+        Layout(name="bottom", size=10),
     )
 
     phase_display = f"[bold cyan]{state.phase}[/]"
     mode_display = f"[yellow]{state.mode}[/]"
-    header = Panel(
+    layout["header"].update(Panel(
         f"[bold white]scraper_v1.py[/]    {phase_display}    mode: {mode_display}    "
         f"[dim]threads: {THREADS}  timeout: {TIMEOUT}s[/]",
-    )
-    layout["header"].update(header)
+    ))
 
-    pct = state.done / state.total if state.total else 0
-    progress = Progress(
+    threads = get_threads()
+    active_count = sum(1 for t in threads if t["status"] in ("fetching", "shallow"))
+    table = Table(
+        show_header=True, header_style="bold", box=None,
+        padding=(0, 1), collapse_padding=True,
+    )
+    table.add_column("#", width=2)
+    table.add_column("Website", width=45, no_wrap=True)
+    table.add_column("Status", width=10)
+    table.add_column("Time", width=8)
+    table.add_column("Result", width=25, no_wrap=True)
+
+    for t in threads:
+        site = t["website"].rstrip("/").split("//")[-1][:42] if t["website"] else "-"
+        if t["status"] == "idle":
+            st = Text("idle", style="dim")
+        elif t["status"] == "fetching":
+            st = Text("fetching", style="bold cyan")
+        elif t["status"] == "done":
+            st = Text("done", style="green")
+        else:
+            st = Text(t["status"], style="dim")
+        elapsed = f"{t['elapsed']:.1f}s" if t["elapsed"] else "-"
+        result = t["result"][:23] if t["result"] else ""
+        table.add_row(str(t["tid"] + 1), site, st, elapsed, result)
+
+    layout["threads"].update(Panel(
+        table, title=f"Threads ({active_count}/{THREADS} active)",
+        border_style="blue",
+    ))
+
+    bottom = Layout()
+    bottom.split_row(
+        Layout(name="progress", ratio=2),
+        Layout(name="stats", ratio=1),
+        Layout(name="timing", ratio=1),
+        Layout(name="log", ratio=2),
+    )
+
+    prog = Progress(
         TextColumn("[bold blue]{task.description}"),
         BarColumn(bar_width=None),
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
         TextColumn("•"),
         TextColumn("{task.completed}/{task.total}"),
     )
-    progress.add_task("Scraping", total=state.total, completed=state.done)
-    layout["body"]["left"]["progress"].update(
-        Panel(progress, title="Progress", border_style="blue")
-    )
+    prog.add_task("Scraping", total=state.total, completed=state.done)
+    bottom["progress"].update(Panel(prog, title="Progress", border_style="blue"))
 
-    stats_table = Table.grid(padding=(0, 2))
-    stats_table.add_row(
+    st = Table.grid(padding=(0, 1))
+    st.add_row(
         Text.assemble(("Found", "bold green"), f"  {state.found}"),
         Text.assemble(("No email", "bold yellow"), f"  {state.no_email}"),
         Text.assemble(("Errors", "bold red"), f"  {state.errors}"),
     )
-    layout["body"]["left"]["stats"].update(
-        Panel(stats_table, title="Results", border_style="green")
-    )
+    bottom["stats"].update(Panel(st, title="Results", border_style="green"))
 
     elapsed = time.time() - state.start_ts
     rate = state.done / elapsed if elapsed > 0 else 0
     remaining = (state.total - state.done) / rate if rate > 0 else 0
-
-    eta_table = Table.grid(padding=(0, 2))
-    eta_table.add_row(
+    tim = Table.grid(padding=(0, 1))
+    tim.add_row(
         Text.assemble(("Elapsed", "bold"), f"  {_fmt_dur(elapsed)}"),
         Text.assemble(("Rate", "bold"), f"  {rate:.1f}/s"),
         Text.assemble(("ETA", "bold"), f"  {_fmt_dur(remaining)}"),
     )
-    layout["body"]["right"]["eta"].update(
-        Panel(eta_table, title="Timing", border_style="magenta")
-    )
+    bottom["timing"].update(Panel(tim, title="Timing", border_style="magenta"))
 
     log_content = "\n".join(state.log_lines) if state.log_lines else "[dim]waiting...[/]"
-    layout["body"]["right"]["log"].update(
-        Panel(log_content, title="Activity", border_style="dim")
-    )
+    bottom["log"].update(Panel(log_content, title="Activity", border_style="dim"))
 
+    layout["bottom"].update(bottom)
     return layout
 
 
@@ -243,6 +290,57 @@ def classify_exception(e):
     return "error"
 
 
+def _do_get(url, verify=True):
+    return _session.get(url, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT},
+                        allow_redirects=True, verify=verify)
+
+
+def fetch_page(url):
+    try:
+        resp = _do_get(url)
+        if resp.status_code == 200:
+            return resp.text, "ok"
+        if resp.status_code in (403, 429):
+            resp = _do_get(url)
+            if resp.status_code == 200:
+                return resp.text, "ok"
+        return "", f"status_{resp.status_code}"
+    except SSLError:
+        try:
+            resp = _do_get(url, verify=False)
+            if resp.status_code == 200:
+                return resp.text, "ok"
+            return "", f"status_{resp.status_code}"
+        except Exception:
+            return "", "ssl_error"
+    except Timeout:
+        return "", "timeout"
+    except ConnectionError as e:
+        status = classify_exception(e)
+        if status == "dns_error":
+            alt = _swap_www(url)
+            if alt:
+                try:
+                    resp = _do_get(alt)
+                    if resp.status_code == 200:
+                        return resp.text, "ok"
+                except Exception:
+                    pass
+        return "", status
+    except requests.RequestException:
+        return "", "error"
+
+
+def _swap_www(url):
+    parsed = urlparse(url)
+    host = parsed.netloc
+    if host.startswith("www."):
+        alt = host[4:]
+    else:
+        alt = "www." + host
+    return url.replace(host, alt, 1)
+
+
 def get_internal_links(html, base_url):
     domain = urlparse(base_url).netloc
     scheme = urlparse(base_url).scheme
@@ -268,6 +366,15 @@ def get_internal_links(html, base_url):
     return links
 
 
+def get_contact_candidate_urls(base_url):
+    candidates = set()
+    parsed = urlparse(base_url)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    for path in COMMON_CONTACT_PATHS:
+        candidates.add(base + path)
+    return candidates
+
+
 def priority_score(url):
     path = urlparse(url).path.lower()
     score = 0
@@ -277,87 +384,6 @@ def priority_score(url):
     if path in ("", "/", "/index.html"):
         score = -10
     return -score
-
-
-def _swap_www(url):
-    """Swap www. prefix: www.example.com → example.com and vice versa."""
-    parsed = urlparse(url)
-    host = parsed.netloc
-    if host.startswith("www."):
-        alt = host[4:]
-    else:
-        alt = "www." + host
-    return url.replace(host, alt, 1)
-
-
-def fetch_page(url):
-    last_status = "error"
-    for attempt in range(MAX_RETRIES):
-        try:
-            headers = {"User-Agent": USER_AGENT}
-            resp = requests.get(
-                url, timeout=TIMEOUT, headers=headers, allow_redirects=True
-            )
-            if resp.status_code == 200:
-                return resp.text, "ok"
-            if resp.status_code in (403, 429) and attempt == 0:
-                headers["User-Agent"] = "curl/8.0"
-                resp = requests.get(
-                    url, timeout=TIMEOUT, headers=headers, allow_redirects=True
-                )
-                if resp.status_code == 200:
-                    return resp.text, "ok"
-            last_status = f"status_{resp.status_code}"
-            return "", last_status
-        except SSLError:
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(1.5)
-            else:
-                # SSL fallback: retry once with verify=False
-                try:
-                    headers = {"User-Agent": USER_AGENT}
-                    resp = requests.get(
-                        url, timeout=TIMEOUT, headers=headers,
-                        allow_redirects=True, verify=False
-                    )
-                    if resp.status_code == 200:
-                        return resp.text, "ok"
-                    return "", f"status_{resp.status_code}"
-                except Exception:
-                    return "", "ssl_error"
-        except Timeout:
-            last_status = "timeout"
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(1.5)
-            else:
-                return "", last_status
-        except ConnectionError as e:
-            last_status = classify_exception(e)
-            if last_status == "dns_error" and attempt == MAX_RETRIES - 1:
-                # DNS fallback: try swapping www prefix
-                alt = _swap_www(url)
-                if alt:
-                    try:
-                        headers = {"User-Agent": USER_AGENT}
-                        resp = requests.get(
-                            alt, timeout=TIMEOUT, headers=headers,
-                            allow_redirects=True
-                        )
-                        if resp.status_code == 200:
-                            return resp.text, "ok"
-                    except Exception:
-                        pass
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(1.5)
-            else:
-                return "", last_status
-        except requests.RequestException:
-            last_status = "error"
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(1.5)
-            else:
-                return "", last_status
-    return "", last_status
 
 
 def fetch_website_emails(website, shallow=True):
@@ -375,23 +401,62 @@ def fetch_website_emails(website, shallow=True):
     if emails:
         return emails, "ok"
 
-    if shallow:
-        internal_links = get_internal_links(html, url)
-        if internal_links:
-            sorted_links = sorted(internal_links, key=priority_score)
-            to_fetch = [l for l in sorted_links if l != url][:MAX_SHALLOW_PAGES]
-            for page_url in to_fetch:
-                page_html, page_status = fetch_page(page_url)
-                if page_status == "ok":
-                    more_emails = extract_emails(page_html)
-                    for e in more_emails:
-                        if e not in seen:
-                            seen.add(e)
-                            emails.append(e)
+    if not shallow:
+        return [], "ok_no_email"
+
+    discovered = set()
+    discovered |= get_internal_links(html, url)
+    discovered |= get_contact_candidate_urls(url)
+    discovered.discard(url)
+
+    if not discovered:
+        return [], "ok_no_email"
+
+    sorted_urls = sorted(discovered, key=priority_score)
+    to_fetch = sorted_urls[:MAX_SHALLOW_PAGES]
+
+    for page_url in to_fetch:
+        page_html, page_status = fetch_page(page_url)
+        if page_status == "ok":
+            more_emails = extract_emails(page_html)
+            for e in more_emails:
+                if e not in seen:
+                    seen.add(e)
+                    emails.append(e)
 
     if emails:
         return emails, "ok"
     return [], "ok_no_email"
+
+
+def setup_log(log_path):
+    logger = logging.getLogger(log_path)
+    logger.setLevel(logging.DEBUG)
+    fh = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter("%(asctime)s  %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(fh)
+    return logger
+
+
+def worker(tid, task_queue, done_queue, shallow):
+    while True:
+        item = task_queue.get()
+        if item is None:
+            task_queue.task_done()
+            break
+        idx, website = item
+        set_thread(tid, website=website, status="fetching", elapsed=0.0, result="")
+        start = time.time()
+        try:
+            emails, status = fetch_website_emails(website, shallow)
+        except Exception:
+            emails, status = [], "error"
+        elapsed = time.time() - start
+        set_thread(tid, website=website, status="done", elapsed=elapsed, result=status)
+        done_queue.put((idx, emails, status))
+        task_queue.task_done()
+        set_thread(tid, website="", status="idle", elapsed=0.0, result="")
 
 
 def process_csv(input_path, output_path, resume=False, shallow=True):
@@ -462,43 +527,50 @@ def process_csv(input_path, output_path, resume=False, shallow=True):
 
     log.info("Scraping started — %s URLs, %s threads, mode=%s", len(to_scrape), THREADS, state.mode)
 
+    task_queue = Queue()
+    done_queue = Queue()
+    threads = []
+    for i in range(THREADS):
+        t = threading.Thread(target=worker, args=(i, task_queue, done_queue, shallow), daemon=True)
+        t.start()
+        threads.append(t)
+
+    for idx in to_scrape:
+        task_queue.put((idx, rows[idx].get("website", "").strip()))
+
     found = 0
     no_email = 0
     errors = 0
+    processed = 0
+    total_tasks = len(to_scrape)
 
     with Live(make_layout(state), refresh_per_second=8, console=console) as live:
-        with ThreadPoolExecutor(max_workers=THREADS) as executor:
-            futures = {}
-            for idx in to_scrape:
-                website = rows[idx].get("website", "").strip()
-                futures[executor.submit(fetch_website_emails, website, shallow)] = idx
-
-            for future in as_completed(futures):
-                idx = futures[future]
-                try:
-                    emails, status = future.result()
-                except Exception as e:
-                    emails, status = [], "error"
-                    log.warning("  Row %s exception: %s", idx, e)
-
-                rows[idx]["emails"] = "; ".join(emails)
-                rows[idx]["website_status"] = status
-                website = rows[idx].get("website", "")
-
-                if emails:
-                    found += 1
-                elif status in ("ok", "ok_no_email"):
-                    no_email += 1
-                else:
-                    errors += 1
-
-                logline = _log_line(website, status, emails)
-                state.push(found, no_email, errors, log_line=logline)
-
-                line = re.sub(r"\[.*?\]", "", logline).strip()
-                log.info("  %s", line)
-
+        while processed < total_tasks:
+            try:
+                idx, emails, status = done_queue.get(timeout=0.1)
+            except QueueEmpty:
                 live.update(make_layout(state))
+                continue
+
+            rows[idx]["emails"] = "; ".join(emails)
+            rows[idx]["website_status"] = status
+            website = rows[idx].get("website", "")
+
+            if emails:
+                found += 1
+            elif status in ("ok", "ok_no_email"):
+                no_email += 1
+            else:
+                errors += 1
+            processed += 1
+
+            logline = _log_line(website, status, emails)
+            state.push(found, no_email, errors, log_line=logline)
+
+            line = re.sub(r"\[.*?\]", "", logline).strip()
+            log.info("  %s", line)
+
+            live.update(make_layout(state))
 
     with open(output_path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -511,16 +583,6 @@ def process_csv(input_path, output_path, resume=False, shallow=True):
     console.print(f"  Elapsed: {_fmt_dur(elapsed)}")
     log.info("Done — %s  found=%s no_email=%s errors=%s elapsed=%ss",
              output_path, found, no_email, errors, int(elapsed))
-
-
-def setup_log(log_path):
-    logger = logging.getLogger(log_path)
-    logger.setLevel(logging.DEBUG)
-    fh = logging.FileHandler(log_path, mode="w", encoding="utf-8")
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(logging.Formatter("%(asctime)s  %(message)s", datefmt="%H:%M:%S"))
-    logger.addHandler(fh)
-    return logger
 
 
 def main():
@@ -543,7 +605,6 @@ def main():
             for arg in args:
                 base, ext = os.path.splitext(arg)
                 out = f"{base}_full{ext}"
-                # If input is in final/, output goes to full/
                 if "final" in arg:
                     out = out.replace("final", "full", 1)
                 custom.append((arg, out))
