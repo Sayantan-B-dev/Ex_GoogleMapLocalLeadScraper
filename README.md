@@ -100,6 +100,15 @@ powershell -ExecutionPolicy Bypass -File run.ps1
 
 Key columns: `title, phone, website, emails, address, category, review_count, review_rating, latitude, longitude, place_id, plus_code, price_range, open_hours, popular_times, about, street_view_url, images, reviews_link, user_reviews, user_reviews_extended, complete_address, credit_cards_accepted, reservations, order_online, menu, owner, timezone, cid, status, descriptions, thumbnail, data_id, input_id, link`
 
+### Directory Notes
+
+| Path | Auto-created | By |
+|------|:-----------:|---|
+| `output/` | ✅ | `run.sh` (`mkdir -p`) |
+| `logs/` | ✅ | `run.sh` (`mkdir -p`) |
+| `batches/` | ❌ | Place batch files manually |
+| `old/` | ❌ | Create manually if needed |
+
 ### Merge
 
 ```bash
@@ -162,3 +171,7 @@ python merge.py --pattern "output/batch_*.csv" --output final.csv
 ```
 
 View the CSV by opening `method1/view.html` in a browser and dragging the file in.
+
+## Acknowledgments
+
+- **[gosom/google-maps-scraper](https://github.com/gosom/google-maps-scraper)** — MIT-licensed Go tool used in Method 2. Massive thanks to [gosom](https://github.com/gosom) and contributors for building and maintaining this excellent scraper. ⭐ the repo if you find it useful!

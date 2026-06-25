@@ -3,11 +3,19 @@ import pandas as pd
 from pathlib import Path
 
 
-def read_batch_csvs(input_dir, pattern="*.csv"):
-    dir_path = Path(input_dir)
-    files = sorted(dir_path.glob(pattern))
+def read_batch_csvs(input_dir="", pattern="*.csv"):
+    dir_path = Path(input_dir) if input_dir else None
+    files = []
+    if dir_path and dir_path.exists():
+        files = sorted(dir_path.rglob(pattern))
+    else:
+        # Default: scan all output/csv/p{1,2,3}/
+        base = Path(__file__).parent / "output" / "csv"
+        if base.exists():
+            for pdir in sorted(base.glob("p*")):
+                files.extend(sorted(pdir.glob(pattern)))
     if not files:
-        print(f"No CSV files found in {input_dir}")
+        print(f"No CSV files found")
         return pd.DataFrame()
     print(f"Found {len(files)} CSV files")
     frames = []
@@ -15,7 +23,7 @@ def read_batch_csvs(input_dir, pattern="*.csv"):
         try:
             df = pd.read_csv(f, encoding="utf-8-sig")
             frames.append(df)
-            print(f"  {f.name}: {len(df)} rows")
+            print(f"  {f.parent.name}/{f.name}: {len(df)} rows")
         except Exception as e:
             print(f"  {f.name}: ERROR — {e}")
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
@@ -55,16 +63,16 @@ def main():
         description="Merge batch CSVs, deduplicate, and report quality"
     )
     parser.add_argument(
-        "--input-dir", default=None,
-        help="Directory containing batch CSV files (default: output/)"
+        "--input-dir", default="",
+        help="Directory containing batch CSV files (default: output/csv/p{1,2,3}/)"
     )
     parser.add_argument(
         "--output", default=None,
         help="Output CSV file path (default: priority_final.csv)"
     )
     parser.add_argument(
-        "--pattern", default="p*_batch_*.csv",
-        help="Glob pattern for batch CSV files (default: p*_batch_*.csv)"
+        "--pattern", default="p*.csv",
+        help="Glob pattern for batch CSV files (default: p*.csv)"
     )
     args = parser.parse_args()
 

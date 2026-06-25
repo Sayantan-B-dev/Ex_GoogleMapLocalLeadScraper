@@ -9,16 +9,14 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 OUTPUT_DIR = BASE_DIR / "output"
 PROFILES_DIR = BASE_DIR / "profiles"
-
-BATCH_FILES = {
-    1: [f"p1_batch_{i}.txt" for i in range(1, 6)],
-    2: [f"p2_batch_{i}.txt" for i in range(1, 6)],
-    3: [f"p3_batch_{i}.txt" for i in range(1, 6)],
-}
+BATCHES_DIR = BASE_DIR / "batches"
 
 
 def ensure_dirs():
-    OUTPUT_DIR.mkdir(exist_ok=True)
+    for phase in [1, 2, 3]:
+        (OUTPUT_DIR / "csv" / f"p{phase}").mkdir(parents=True, exist_ok=True)
+        (OUTPUT_DIR / "logs" / f"p{phase}").mkdir(parents=True, exist_ok=True)
+        (BATCHES_DIR / f"p{phase}").mkdir(parents=True, exist_ok=True)
     PROFILES_DIR.mkdir(exist_ok=True)
 
 
@@ -26,10 +24,10 @@ def batch_label(batch_file):
     return batch_file.replace(".txt", "")
 
 
-def get_counts(batch_file):
+def get_counts(batch_file, phase):
     label = batch_label(batch_file)
-    csv_path = OUTPUT_DIR / f"{label}.csv"
-    done_path = OUTPUT_DIR / f"{label}.done"
+    csv_path = OUTPUT_DIR / "csv" / f"p{phase}" / f"{label}.csv"
+    done_path = OUTPUT_DIR / "csv" / f"p{phase}" / f"{label}.done"
     leads = 0
     if csv_path.exists():
         try:
@@ -53,7 +51,7 @@ def write_progress(phase, batch_files, processes, completed):
 
     for batch in batch_files:
         label = batch_label(batch)
-        leads, done_q = get_counts(batch)
+        leads, done_q = get_counts(batch, phase)
         if batch in completed:
             status = "done"
         elif batch in processes:
@@ -84,10 +82,16 @@ def write_progress(phase, batch_files, processes, completed):
 
 def launch_scraper(batch_file, phase):
     label = batch_label(batch_file)
-    input_path = BASE_DIR / batch_file
-    output_path = OUTPUT_DIR / f"{label}.csv"
+    input_path = BATCHES_DIR / f"p{phase}" / batch_file
+    csv_dir = OUTPUT_DIR / "csv" / f"p{phase}"
+    log_dir = OUTPUT_DIR / "logs" / f"p{phase}"
+    output_path = csv_dir / f"{label}.csv"
+    done_path = csv_dir / f"{label}.done"
+    log_file = log_dir / f"{label}.log"
     profile_path = PROFILES_DIR / f"{label}"
-    done_path = OUTPUT_DIR / f"{label}.done"
+
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
         sys.executable,
@@ -98,11 +102,10 @@ def launch_scraper(batch_file, phase):
         "--done", str(done_path),
     ]
 
-    log_file = OUTPUT_DIR / f"{label}.log"
     log_fh = open(log_file, "w", encoding="utf-8")
 
-    print(f"  Starting: {label} → {output_path.name}")
-    print(f"    Profile: {profile_path}")
+    print(f"  Starting: {label}")
+    print(f"    CSV: {output_path}")
     print(f"    Log: {log_file}")
 
     proc = subprocess.Popen(
@@ -129,7 +132,15 @@ def main():
     args = parser.parse_args()
 
     ensure_dirs()
-    batch_files = BATCH_FILES[args.phase]
+
+    batch_dir = BATCHES_DIR / f"p{args.phase}"
+    if not batch_dir.exists():
+        print(f"Error: {batch_dir} not found. Run split_batches.py first.")
+        sys.exit(1)
+    batch_files = sorted([f.name for f in batch_dir.glob("*.txt")])
+    if not batch_files:
+        print(f"Error: No batch files found in {batch_dir}")
+        sys.exit(1)
     max_workers = min(args.max_concurrent, len(batch_files))
 
     print(f"\n{'='*60}")
@@ -141,7 +152,6 @@ def main():
     completed = set()
 
     while len(completed) < len(batch_files):
-        # Launch new processes if below max and batches remain
         while len(processes) < max_workers:
             remaining = [b for b in batch_files if b not in completed and b not in processes]
             if not remaining:
@@ -153,7 +163,6 @@ def main():
         if not processes:
             break
 
-        # Poll running processes
         finished = []
         for batch, (proc, log_fh, label) in processes.items():
             ret = proc.poll()
@@ -178,11 +187,11 @@ def main():
     print(f"Phase {args.phase} complete — {len(completed)} batches done")
     print(f"{'='*60}")
 
-    # Print summary
     print("\nOutput files:")
+    csv_dir = OUTPUT_DIR / "csv" / f"p{args.phase}"
     for batch in batch_files:
         label = batch_label(batch)
-        csv_path = OUTPUT_DIR / f"{label}.csv"
+        csv_path = csv_dir / f"{label}.csv"
         count = 0
         if csv_path.exists():
             try:

@@ -77,17 +77,17 @@ def main():
     )
     parser.add_argument(
         "--output", default=None,
-        help="Output CSV file path (default: p2_final.csv)"
+        help="Output CSV file path (default: final.csv)"
     )
     parser.add_argument(
-        "--pattern", default="p2_batch_*.csv",
-        help="Glob pattern for batch CSV files (default: p2_batch_*.csv)"
+        "--pattern", default="batch_*.csv",
+        help="Glob pattern for batch CSV files (default: batch_*.csv)"
     )
     args = parser.parse_args()
 
     base = Path(__file__).parent
     input_dir = args.input_dir or str(base / "output")
-    output_path = args.output or str(base / "p2_final.csv")
+    output_path = args.output or str(base / "final.csv")
 
     df = read_csvs(input_dir, args.pattern)
     if df.empty:

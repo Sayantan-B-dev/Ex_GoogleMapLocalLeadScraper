@@ -16,8 +16,12 @@ node_modules/
 # Scraping runtime output
 method1/output/
 method1/profiles/
+method1/batches/
 method2/output/
 method2/logs/
+method2/old/
+method2/batches/
+method2/backup/
 
 # OS junk
 .DS_Store
