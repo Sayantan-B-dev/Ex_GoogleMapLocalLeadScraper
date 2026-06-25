@@ -13,17 +13,23 @@ Takes the `p{1,2,3}_final.csv` files (from method2), fetches each business's hom
 ```bash
 cd taskFetchEmail
 
-# Process all 3 files (default: shallow crawl, 16 threads)
+# Process all 3 files (default: shallow crawl, 15 threads)
 python scraper_v1.py
 
-# Homepage only (faster, misses splash-page emails)
-python scraper_v1.py --fast
+# Process a single file (by CSV path)
+python scraper_v1.py final/p3_final.csv
 
-# Resume a partial run
+# Resume a partial run (skips rows with existing website_status)
 python scraper_v1.py --resume
 
-# Process a single file
-python scraper_v1.py p1_final.csv
+# Resume a specific file
+python scraper_v1.py --resume final/p3_final.csv
+
+# Homepage only (faster, skips shallow crawl)
+python scraper_v1.py --fast
+
+# Re-scan all rows without email (ignores website_status)
+python scraper_v1.py --all
 
 # Analyze input CSV stats (websites, phones, emails)
 python analyze_final.py
@@ -69,15 +75,16 @@ Empty status for rows without a website.
 | Feature | Detail |
 |---------|--------|
 | Concurrency | 15 threads (adjustable via `THREADS` constant) |
-| Engine | `requests` + `BeautifulSoup` (lightweight, no browser) |
+| Engine | `requests` + raw daemon threads (no `ThreadPoolExecutor` cleanup hangs) |
+| Hard timeout | Every HTTP call wrapped in a daemon thread with 13s wall-clock timeout — cannot hang |
 | Shallow crawl | Follows up to 5 internal/contact pages if homepage has no email |
 | Contact discovery | Guesses `/contact`, `/about`, `/reach-us` etc. directly |
 | Cloudflare decode | Decodes `__cf_email__` obfuscated addresses |
 | Email dedup | Per-row, with skip list for fake/sentry addresses |
-| Resume | `--resume` flag picks up from partial output |
-| TUI | Per-thread live table + progress bar + counts + activity log via `rich` |
-| Per-thread view | Live table showing each thread's current URL, status, elapsed time |
-| Logging | Per-phase `.log` file with timestamps |
+| Resume | `--resume` flag picks up from partial output; also falls back to log file |
+| `--all` | Re-scrapes all rows without email, ignoring `website_status` |
+| TUI | Per-thread live view + progress bar + stats + activity log via `rich` |
+| Logging | Per-phase `.log` file with timestamps, appends across runs |
 
 ## Performance
 
