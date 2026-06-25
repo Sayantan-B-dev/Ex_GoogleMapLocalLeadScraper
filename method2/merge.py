@@ -94,6 +94,10 @@ def main():
         print("Nothing to merge.")
         return
 
+    # Ensure emails column exists (even if empty) when -email flag is skipped
+    if "emails" not in df.columns:
+        df["emails"] = ""
+
     total_before = len(df)
 
     # Dedup on title+phone (gosom schema uses 'title' for name)

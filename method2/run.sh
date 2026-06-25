@@ -75,7 +75,6 @@ while [[ $IDX -lt $TOTAL_RUN ]]; do
       -input /queries.txt \
       -results "/out/${bn}.csv" \
       -depth 20 \
-      -email \
       -c 4 \
       -exit-on-inactivity 3m > "$log" 2>&1 &
     DPIDS["$bn"]=$!
