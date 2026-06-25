@@ -29,6 +29,8 @@ from urllib.parse import urlparse, urljoin
 
 import requests
 from requests.exceptions import SSLError, ConnectionError, Timeout
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import ctypes
 
@@ -277,7 +279,19 @@ def priority_score(url):
     return -score
 
 
+def _swap_www(url):
+    """Swap www. prefix: www.example.com → example.com and vice versa."""
+    parsed = urlparse(url)
+    host = parsed.netloc
+    if host.startswith("www."):
+        alt = host[4:]
+    else:
+        alt = "www." + host
+    return url.replace(host, alt, 1)
+
+
 def fetch_page(url):
+    last_status = "error"
     for attempt in range(MAX_RETRIES):
         try:
             headers = {"User-Agent": USER_AGENT}
@@ -293,29 +307,57 @@ def fetch_page(url):
                 )
                 if resp.status_code == 200:
                     return resp.text, "ok"
-            return "", f"status_{resp.status_code}"
+            last_status = f"status_{resp.status_code}"
+            return "", last_status
         except SSLError:
             if attempt < MAX_RETRIES - 1:
                 time.sleep(1.5)
             else:
-                return "", "ssl_error"
+                # SSL fallback: retry once with verify=False
+                try:
+                    headers = {"User-Agent": USER_AGENT}
+                    resp = requests.get(
+                        url, timeout=TIMEOUT, headers=headers,
+                        allow_redirects=True, verify=False
+                    )
+                    if resp.status_code == 200:
+                        return resp.text, "ok"
+                    return "", f"status_{resp.status_code}"
+                except Exception:
+                    return "", "ssl_error"
         except Timeout:
+            last_status = "timeout"
             if attempt < MAX_RETRIES - 1:
                 time.sleep(1.5)
             else:
-                return "", "timeout"
+                return "", last_status
         except ConnectionError as e:
-            status = classify_exception(e)
+            last_status = classify_exception(e)
+            if last_status == "dns_error" and attempt == MAX_RETRIES - 1:
+                # DNS fallback: try swapping www prefix
+                alt = _swap_www(url)
+                if alt:
+                    try:
+                        headers = {"User-Agent": USER_AGENT}
+                        resp = requests.get(
+                            alt, timeout=TIMEOUT, headers=headers,
+                            allow_redirects=True
+                        )
+                        if resp.status_code == 200:
+                            return resp.text, "ok"
+                    except Exception:
+                        pass
             if attempt < MAX_RETRIES - 1:
                 time.sleep(1.5)
             else:
-                return "", status
+                return "", last_status
         except requests.RequestException:
+            last_status = "error"
             if attempt < MAX_RETRIES - 1:
                 time.sleep(1.5)
             else:
-                return "", "error"
-    return "", "error"
+                return "", last_status
+    return "", last_status
 
 
 def fetch_website_emails(website, shallow=True):
