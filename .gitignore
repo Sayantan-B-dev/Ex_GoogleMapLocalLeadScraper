@@ -25,7 +25,11 @@ method2/backup/
 method2/*_final*.csv
 
 # CSV output files
+taskFetchEmail/final/
+taskFetchEmail/full/
+taskFetchEmail/log/
 taskFetchEmail/*.csv
+taskFetchEmail/*.log
 
 # All log files (runtime artifacts)
 *.log

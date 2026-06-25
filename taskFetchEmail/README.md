@@ -26,21 +26,22 @@ python scraper_v1.py --resume
 python scraper_v1.py p1_final.csv
 ```
 
-## Input
+## Input / Output
 
-| File | Rows | With Website | With Email |
-|------|-----:|:-----------:|:----------:|
-| `p1_final.csv` | 8,082 | 5,357 | 1,336 |
-| `p2_final.csv` | 2,745 | 1,617 | 0 |
-| `p3_final.csv` | 13,564 | 8,126 | 0 |
-| **Total** | **24,391** | **15,100** | **1,336** |
+Input CSVs live in `final/`, output goes to `full/`, logs to `log/`.
 
-## Output
-
-| File | Description |
-|------|-------------|
-| `p{1,2,3}_full.csv` | Input CSV + 2 new columns: `website_status`, `emails` |
-| `p{1,2,3}_full.log` | Per-URL log with found emails and errors |
+| File | Location | Rows | With Website | With Email |
+|------|----------|-----:|:-----------:|:----------:|
+| `p1_final.csv` | `final/` | 8,082 | 5,357 | 1,336 |
+| `p2_final.csv` | `final/` | 2,745 | 1,617 | 0 |
+| `p3_final.csv` | `final/` | 13,564 | 8,126 | 0 |
+| **Total** | | **24,391** | **15,100** | **1,336** |
+| `p1_full.csv` | `full/` | Output with `website_status` + `emails` columns |
+| `p2_full.csv` | `full/` | ↑ |
+| `p3_full.csv` | `full/` | ↑ |
+| `p1_full.log` | `log/` | Per-URL log with found emails and errors |
+| `p2_full.log` | `log/` | ↑ |
+| `p3_full.log` | `log/`` | ↑ |
 
 ### website_status values
 
@@ -84,11 +85,7 @@ CPU ~30-40%, RAM ~45-50%. Bottleneck is network I/O, not CPU.
 taskFetchEmail/
 ├── README.md        # This file
 ├── scraper_v1.py    # Main email extraction script
-├── p1_final.csv     # Input — P1 leads (8,082 rows)
-├── p2_final.csv     # Input — P2 leads (2,745 rows)
-├── p3_final.csv     # Input — P3 leads (13,564 rows)
-├── p1_full.csv      # Output — P1 with emails (after running)
-├── p2_full.csv      # Output — P2 with emails
-├── p3_full.csv      # Output — P3 with emails
-└── p{1,2,3}_full.log  # Per-phase logs
+├── final/           # Input CSVs (p{1,2,3}_final.csv)
+├── full/            # Output CSVs (p{1,2,3}_full.csv)
+└── log/             # Log files (p{1,2,3}_full.log)
 ```

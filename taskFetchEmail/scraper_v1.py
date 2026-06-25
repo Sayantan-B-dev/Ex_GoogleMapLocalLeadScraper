@@ -52,7 +52,7 @@ mode = ctypes.c_uint32()
 if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
     kernel32.SetConsoleMode(handle, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
 
-THREADS = 10
+THREADS = 15
 TIMEOUT = 15
 MAX_RETRIES = 2
 MAX_SHALLOW_PAGES = 3
@@ -395,7 +395,9 @@ def fetch_website_emails(website, shallow=True):
 
 
 def process_csv(input_path, output_path, resume=False, shallow=True):
-    log_path = output_path.rsplit(".", 1)[0] + ".log"
+    log_path = os.path.join("log", os.path.basename(output_path).rsplit(".", 1)[0] + ".log")
+    os.makedirs("log", exist_ok=True)
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     log = setup_log(log_path)
 
     source = output_path if (resume and os.path.exists(output_path)) else input_path
@@ -523,9 +525,9 @@ def setup_log(log_path):
 
 def main():
     phases = [
-        ("p1_final.csv", "p1_full.csv"),
-        ("p2_final.csv", "p2_full.csv"),
-        ("p3_final.csv", "p3_full.csv"),
+        ("final/p1_final.csv", "full/p1_full.csv"),
+        ("final/p2_final.csv", "full/p2_full.csv"),
+        ("final/p3_final.csv", "full/p3_full.csv"),
     ]
 
     resume = "--resume" in sys.argv
@@ -533,14 +535,18 @@ def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
 
     if args:
-        matched = [(i, o) for i, o in phases if any(a in i for a in args)]
+        matched = [(i, o) for i, o in phases if any(a in i or a in os.path.basename(i) for a in args)]
         if matched:
             phases = matched
         else:
             custom = []
             for arg in args:
                 base, ext = os.path.splitext(arg)
-                custom.append((arg, f"{base}_full{ext}"))
+                out = f"{base}_full{ext}"
+                # If input is in final/, output goes to full/
+                if "final" in arg:
+                    out = out.replace("final", "full", 1)
+                custom.append((arg, out))
             phases = custom
 
     for inp, out in phases:
