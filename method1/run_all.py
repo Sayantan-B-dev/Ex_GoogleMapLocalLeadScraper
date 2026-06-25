@@ -126,7 +126,7 @@ def main():
         help="Priority phase to run (1, 2, or 3)"
     )
     parser.add_argument(
-        "--max-concurrent", type=int, default=2,
+        "--max-concurrent", type=int, default=3,
         help="Max concurrent scraper processes (default: 2)"
     )
     args = parser.parse_args()
