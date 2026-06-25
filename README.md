@@ -56,6 +56,43 @@ python merge.py --pattern "output/p*_batch_*.csv" --output final.csv
 
 ---
 
+## Method 3: Email Extractor (requests + Rich TUI)
+
+**Location:** `taskFetchEmail/`
+
+Lightweight email extraction from already-scraped lead CSVs. Fetches each business's homepage, extracts emails via regex + Cloudflare decoding, optionally shallow-crawls internal pages.
+
+### Run
+
+```bash
+cd taskFetchEmail
+python scraper_v1.py              # all 3 files, shallow crawl
+python scraper_v1.py --fast       # homepage only
+python scraper_v1.py --resume     # resume partial output
+```
+
+### Features
+
+| Feature | Detail |
+|---------|--------|
+| Concurrency | 10 threads, network-bound |
+| Engine | `requests` + `BeautifulSoup` (no browser) |
+| Email extraction | Regex + Cloudflare email protection decode |
+| Shallow crawl | Follows 3 internal links if homepage has no email |
+| TUI | Live progress bar, counts, activity log via `rich` |
+| Resume | `--resume` flag picks up from partial output |
+| Status column | `website_status`: ok / dns_error / ssl_error / status_XXX |
+
+### Input/Output
+
+| Phase | Input | Output | Websites to scan |
+|-------|-------|--------|:----------------:|
+| P1 | `p1_final.csv` | `p1_full.csv` | 5,357 |
+| P2 | `p2_final.csv` | `p2_full.csv` | 1,617 |
+| P3 | `p3_final.csv` | `p3_full.csv` | 8,126 |
+
+---
+
 ## Method 2: gosom Docker (Go)
 
 **Location:** `method2/`
@@ -119,45 +156,40 @@ python merge.py --pattern "output/batch_*.csv" --output final.csv
 
 ## Comparison
 
-| | Method 1 (Playwright) | Method 2 (gosom Docker) |
-|---|---|---|
-| Engine | Python + Playwright | Go + Docker |
-| Results/query | 60–180 | ~80–180 |
-| Fields/lead | 11 | 33+ |
-| Speed | 2–4 min/query | 5–8 min/query |
-| Concurrency | 5 parallel browsers | 4 parallel queries |
-| Total time (432 queries) | ~7–14h | ~9–14h |
-| Resume granularity | Per-query (`.done`) | Per-batch (CSV check) |
-| Setup complexity | Python + Playwright install | Docker only |
-| RAM usage | ~1GB/browser (5 = 5GB) | ~500MB total |
+| | Method 1 (Playwright) | Method 2 (gosom Docker) | Method 3 (Email Extractor) |
+|---|---|---|---|
+| Engine | Python + Playwright | Go + Docker | Python + requests |
+| Purpose | Full scrape | Full scrape | Email enrichment |
+| Fields/lead | 11 | 33+ | Adds emails to existing CSVs |
+| Concurrency | 5 browsers | 4 queries | 10 threads |
+| Setup | Python + Playwright | Docker | Python + requests |
+| RAM | ~5GB | ~500MB | ~200MB |
 
 ## Directory Structure
 
 ```
 scraping_info/
 ├── README.md
-├── DEPLOY.md          # Cloud deployment guide (Oracle, Colab, VPS)
-├── AGENTS.md          # Full project state
-├── method1/
-│   ├── scraper.py     # Playwright scraper
-│   ├── run_all.py     # Parallel orchestrator
-│   ├── merge.py       # Merge + dedup + quality report
-│   ├── view.html      # CSV + live progress viewer
-│   ├── details.html   # Quick batch viewer
-│   ├── priority_1_queries.txt  # All P1 queries (432)
-│   ├── p1_batch_1..5.txt       # P1 batch files
-│   ├── p2_batch_1..5.txt       # P2 batch files
-│   ├── p3_batch_1..5.txt       # P3 batch files
-│   └── google_maps_leads.csv   # Legacy export (do not modify)
-└── method2/
-    ├── run.sh          # Main runner (bash)
-    ├── run.bat         # CMD runner
-    ├── run.ps1         # PowerShell runner
-    ├── merge.py        # Merge + dedup for gosom schema
-    ├── queries.txt     # All P1 queries (432)
-    └── batches/        # 9 batch files (48 queries each)
-        ├── batch_00.txt
-        └── ...
+├── DEPLOY.md            # Cloud deployment guide (Oracle, Colab, VPS)
+├── AGENTS.md            # Full project state
+├── method1/             # Playwright (Python) — custom scraper
+│   ├── scraper.py
+│   ├── run_all.py
+│   ├── merge.py
+│   ├── view.html + details.html
+│   └── priority_{1,2,3}_queries.txt
+├── method2/             # gosom Docker (Go) — primary scraper
+│   ├── run.sh / run.bat / run.ps1
+│   ├── merge.py
+│   ├── view.html
+│   ├── queries.txt
+│   └── batches/
+└── taskFetchEmail/      # Method 3 — email enrichment
+    ├── README.md
+    ├── scraper_v1.py
+    ├── p1_final.csv → p1_full.csv (+ p1_full.log)
+    ├── p2_final.csv → p2_full.csv (+ p2_full.log)
+    └── p3_final.csv → p3_full.csv (+ p3_full.log)
 ```
 
 ## Quick Start
@@ -168,9 +200,12 @@ cd method2 && ./run.sh
 
 # After it finishes, merge results
 python merge.py --pattern "output/batch_*.csv" --output final.csv
+
+# Extract emails from the merged leads
+cd ../taskFetchEmail && python scraper_v1.py
 ```
 
-View the CSV by opening `method1/view.html` in a browser and dragging the file in.
+View the CSV by opening `method2/view.html` or `method1/view.html` in a browser and dragging the file in.
 
 ## Acknowledgments
 

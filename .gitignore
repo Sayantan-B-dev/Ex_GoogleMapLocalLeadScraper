@@ -22,9 +22,13 @@ method2/logs/
 method2/old/
 method2/batches/
 method2/backup/
-method2/p1_final.csv
+method2/*_final*.csv
 
+# CSV output files
+taskFetchEmail/*.csv
 
+# All log files (runtime artifacts)
+*.log
 # OS junk
 .DS_Store
 Thumbs.db
