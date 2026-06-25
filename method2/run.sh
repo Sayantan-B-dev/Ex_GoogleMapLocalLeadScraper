@@ -74,7 +74,7 @@ while [[ $IDX -lt $TOTAL_RUN ]]; do
       gosom/google-maps-scraper \
       -input /queries.txt \
       -results "/out/${bn}.csv" \
-      -depth 20 \
+      -depth 60 \
       -c 4 \
       -exit-on-inactivity 3m > "$log" 2>&1 &
     DPIDS["$bn"]=$!
